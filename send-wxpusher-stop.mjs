@@ -198,26 +198,38 @@ async function summarize(config, input) {
   if (!answer && !request) return "";
   const context = [request && `用户：${request}`, answer && `助手：${answer}`].join("\n");
   const proxy = (config.proxy || "").trim();
-  // Candidates stay in preference order (the agent's own model first); within one
-  // candidate, direct and proxied race, because Node ignores the Windows system
-  // proxy and some upstreams are only reachable through the local clash/mihomo.
+  // Prefer a successful direct request; only retry through the proxy on failure.
   for (const target of endpointCandidates(config, input)) {
-    const text = await raceRoutes(target, context, proxy, config);
+    const text = await tryRoutes(target, context, proxy, config);
     if (text) return text;
   }
   return "";
 }
 
-async function raceRoutes(target, context, proxy, config) {
-  const tries = [summaryCall(target, context)];
-  if (proxy && !process.env.WXPUSHER_SUMMARIZE_ONLY) {
-    tries.push(summarizeViaProxy(proxy, target, context, config));
-  }
-  const racers = tries.map((p) => p.then((text) => (text ? text : Promise.reject(new Error("empty")))));
+async function tryRoutes(target, context, proxy, config) {
+  const direct = await summaryCall(target, context);
+  if (direct) return direct;
+  if (proxy && !process.env.WXPUSHER_SUMMARIZE_ONLY)
+    return summarizeViaProxy(proxy, target, context, config);
+  return "";
+}
+
+function createJob(payload) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wxpusher-job-"));
+  const file = path.join(dir, "payload.json");
   try {
-    return await Promise.any(racers);
-  } catch {
-    return "";
+    fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600, flag: "wx" });
+    return file;
+  } catch (error) {
+    removeJob(file);
+    throw error;
+  }
+}
+
+function removeJob(file) {
+  try { fs.unlinkSync(file); } catch { /* already consumed */ }
+  if (path.basename(file) === "payload.json" && path.basename(path.dirname(file)).startsWith("wxpusher-job-")) {
+    try { fs.rmdirSync(path.dirname(file)); } catch { /* only remove our empty job directory */ }
   }
 }
 
@@ -230,8 +242,7 @@ function summarizeViaProxy(proxy, target, context, config = {}) {
   return new Promise((resolve) => {
     let tmp = "";
     try {
-      tmp = path.join(os.tmpdir(), `wxpusher-sum-${process.pid}-${Date.now()}.json`);
-      fs.writeFileSync(tmp, JSON.stringify({ target, context }), { mode: 0o600 });
+      tmp = createJob({ target, context });
       const child = spawn(nodeBin, [process.argv[1], "--summarize-only", tmp], {
         env: { ...process.env, WXPUSHER_SUMMARIZE_ONLY: "1", NODE_USE_ENV_PROXY: "1",
                HTTP_PROXY: proxy, HTTPS_PROXY: proxy },
@@ -242,15 +253,15 @@ function summarizeViaProxy(proxy, target, context, config = {}) {
       const kill = setTimeout(() => child.kill(), SUMMARY_TIMEOUT + 5_000);
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => { out += chunk; });
-      child.on("error", () => { clearTimeout(kill); resolve(""); });
+      child.on("error", () => { clearTimeout(kill); removeJob(tmp); resolve(""); });
       child.on("close", () => {
         clearTimeout(kill);
-        try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+        removeJob(tmp);
         const i = out.indexOf(SUMMARY_MARKER);
         resolve(i === -1 ? "" : out.slice(i + SUMMARY_MARKER.length).trim().split(/\r?\n/)[0]);
       });
     } catch {
-      if (tmp) { try { fs.unlinkSync(tmp); } catch { /* already gone */ } }
+      if (tmp) removeJob(tmp);
       resolve("");
     }
   });
@@ -336,8 +347,8 @@ async function main() {
     let payload = {};
     try {
       payload = JSON.parse(fs.readFileSync(workerFile, "utf8"));
-      fs.unlinkSync(workerFile);
     } catch { /* a payload we cannot read is not worth failing the turn over */ }
+    finally { removeJob(workerFile); }
     await push(payload, agent);
     return;
   }
@@ -352,17 +363,19 @@ async function main() {
 
   // The summary is one model call and the push is one HTTP call: keep the
   // agent turn unblocked by handing them to a detached copy of this script.
-  const tmp = path.join(os.tmpdir(), `wxpusher-${process.pid}-${Date.now()}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(payload), { mode: 0o600 });
-  const child = spawn(process.execPath, [process.argv[1], "--worker", tmp, "--agent", agent], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.on("error", () => {
-    try { fs.unlinkSync(tmp); } catch { /* already gone */ }
-  });
-  child.unref();
+  const tmp = createJob(payload);
+  try {
+    const child = spawn(process.execPath, [process.argv[1], "--worker", tmp, "--agent", agent], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", () => removeJob(tmp));
+    child.unref();
+  } catch (error) {
+    removeJob(tmp);
+    throw error;
+  }
 }
 
 const hookMode = !process.argv.some((arg) => ["--test", "--worker", "--summarize-only"].includes(arg));

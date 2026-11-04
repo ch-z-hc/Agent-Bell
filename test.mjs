@@ -29,6 +29,7 @@ function fixture(name, interactiveAnswers) {
 import os from "node:os";
 import fs from "node:fs";
 import readline from "node:readline/promises";
+import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 os.homedir = () => ${JSON.stringify(home)};
 os.tmpdir = () => ${JSON.stringify(path.join(home, "tmp"))};
@@ -46,11 +47,23 @@ if (${Boolean(interactiveAnswers)}) {
     }, close() {},
   });
 }
+const originalSpawn = childProcess.spawn;
+childProcess.spawn = (bin, args, options) => {
+  const index = args.findIndex(arg => arg === "--worker" || arg === "--summarize-only");
+  if (index !== -1) {
+    const file = args[index + 1];
+    const dir = file.slice(0, Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\\\")));
+    fs.appendFileSync(${JSON.stringify(path.join(root, "job-modes.jsonl"))}, JSON.stringify({fileMode: fs.statSync(file).mode & 0o777, dirMode: fs.statSync(dir).mode & 0o777}) + "\\n");
+    if (process.env.WX_TEST_SPAWN_FAIL) throw new Error("synthetic spawn failure");
+  }
+  return originalSpawn(bin, args, options);
+};
 syncBuiltinESMExports();
 globalThis.fetch = async (url, options) => {
   const body = JSON.parse(options.body);
-  fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({url, body}) + "\\n");
+  fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({url, body, proxy: Boolean(process.env.WXPUSHER_SUMMARIZE_ONLY)}) + "\\n");
   if (process.env.WX_TEST_FAIL) throw new Error("SPT_do_not_print");
+  if (url.endsWith("/chat/completions") && process.env.WX_TEST_DIRECT_FAIL && !process.env.WXPUSHER_SUMMARIZE_ONLY) throw new Error("synthetic direct failure");
   if (url.endsWith("/chat/completions")) return { ok: true, json: async () => ({ choices: [{ message: { content: "模拟任务摘要" } }] }) };
   if (url !== "https://wxpusher.zjiecode.com/api/send/message/simple-push") throw new Error("unexpected endpoint");
   return { ok: true, json: async () => ({code: 1000}) };
@@ -66,7 +79,8 @@ globalThis.fetch = async (url, options) => {
     fs.writeFileSync(file, typeof value === "string" ? value : JSON.stringify(value));
   }
   function requests() { return fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : []; }
-  return { repo, home, codex, pi, env, run, write, requests };
+  function jobModes() { const file = path.join(root, "job-modes.jsonl"); return fs.existsSync(file) ? fs.readFileSync(file, "utf8").trim().split("\n").map(JSON.parse) : []; }
+  return { repo, home, codex, pi, env, run, write, requests, jobModes };
 }
 
 const credentials = { WXPUSHER_SPT: "SPT_offline_fixture" };
@@ -356,4 +370,43 @@ assert.equal(sent[1].payload.last_assistant_message, "");
 `;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], { env: f.env, encoding: "utf8", timeout: 10_000, windowsHide: true });
   succeeds(result);
+});
+
+
+test("proxy is a fallback, private jobs are cleaned after success and spawn failures", () => {
+  for (const [name, extra, expectedSummaries] of [
+    ["direct success", {}, 1],
+    ["proxy fallback", { WX_TEST_DIRECT_FAIL: "1" }, 2],
+    ["proxy spawn failure", { WX_TEST_DIRECT_FAIL: "1", WX_TEST_SPAWN_FAIL: "1" }, 1],
+  ]) {
+    const f = fixture(name);
+    f.write(path.join(f.repo, "wxpusher.json"), {
+      spt: "SPT_fixture", proxy: "http://proxy.invalid", node: process.execPath,
+      summary: { model: "fixture", base_url: "https://summary.invalid/v1", api_key: "fixture-key" },
+    });
+    succeeds(f.run(["--agent", "codex", "--non-interactive"]));
+    succeeds(f.run([], { WXPUSHER_SYNC: "1", ...extra }, JSON.stringify({ last_assistant_message: "完成离线验证" }), path.join(f.codex, "send-wxpusher-stop.mjs")));
+    const summaries = f.requests().filter(r => r.url.endsWith("/chat/completions"));
+    assert.equal(summaries.length, expectedSummaries);
+    assert.equal(summaries[0].proxy, false);
+    if (summaries.length === 2) assert.equal(summaries[1].proxy, true);
+    assert.equal(f.requests().filter(r => r.url.endsWith("simple-push")).length, 1);
+    if (name === "direct success") assert.equal(f.jobModes().length, 0);
+    else {
+      assert.equal(f.jobModes().length, 1);
+      if (process.platform !== "win32") assert.deepEqual(f.jobModes()[0], {fileMode: 0o600, dirMode: 0o700});
+    }
+    assert.deepEqual(fs.readdirSync(path.join(f.home, "tmp")), []);
+  }
+});
+
+test("detached worker spawn failure cleans its private payload without failing the hook", () => {
+  const f = fixture("failed worker spawn");
+  succeeds(f.run(["--agent", "codex", "--non-interactive"], credentials));
+  const result = f.run([], { WX_TEST_SPAWN_FAIL: "1" }, JSON.stringify({ last_assistant_message: "离线任务" }), path.join(f.codex, "send-wxpusher-stop.mjs"));
+  succeeds(result);
+  assert.deepEqual(JSON.parse(result.stdout), {});
+  if (process.platform !== "win32") assert.deepEqual(f.jobModes(), [{fileMode: 0o600, dirMode: 0o700}]);
+  assert.deepEqual(fs.readdirSync(path.join(f.home, "tmp")), []);
+  assert.equal(f.requests().length, 0);
 });

@@ -1,4 +1,4 @@
-# Agent Bell
+# Agent-Bell
 
 在 Codex / Pi 回合结束时，通过 [WxPusher](https://wxpusher.zjiecode.com/) 发送通知。
 

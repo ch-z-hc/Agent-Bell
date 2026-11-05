@@ -1,4 +1,4 @@
-# agent-wxpusher
+# Agent Bell
 
 在 Codex / Pi 回合结束时，通过 [WxPusher](https://wxpusher.zjiecode.com/) 发送通知。
 
@@ -22,8 +22,8 @@ Codex 使用 `Stop` hook，Pi 使用 `agent_settled` 扩展。通知在后台发
 先按 [WxPusher 的 SPT 指南](https://wxpusher.zjiecode.com/docs/spt.html) 扫码获取自己的推送令牌。本项目使用极简推送，不需要 appToken 或 UID。
 
 ```sh
-git clone https://github.com/ch-z-hc/agent-wxpusher.git
-cd agent-wxpusher
+git clone https://github.com/ch-z-hc/Agent-Bell.git
+cd Agent-Bell
 node install.mjs
 ```
 

@@ -106,7 +106,7 @@ printf '%s' '{"last_assistant_message":"通知链路测试"}' \
   | WXPUSHER_SYNC=1 node ~/.codex/send-wxpusher-stop.mjs
 ```
 
-这会发送真实消息，不是离线测试。Windows PowerShell 可设置 `$env:WXPUSHER_SYNC = '1'`，将同样的 JSON 字符串通过管道传给发送脚本。优先用 README 中的 `--test` 命令检查，不需要手动拼接 hook 输入。
+这会发送真实消息，不是离线测试。Windows PowerShell 可设置 `$env:WXPUSHER_SYNC = '1'`，将同样的 JSON 字符串通过管道传给发送脚本。优先用[使用指南](guide.md#验证通知)中的 `--test` 命令检查，不需要手动拼接 hook 输入。
 
 发送脚本的 `--summarize-only <文件>` 只请求摘要模型，不向 WxPusher 发消息。文件格式为 `{ "target": { "base_url": "...", "api_key": "...", "model": "..." }, "context": "..." }`；结果以 `WXPUSHER_RECAP:` 开头。此文件同样包含凭据，应妥善保管。
 

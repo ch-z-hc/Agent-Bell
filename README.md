@@ -1,18 +1,15 @@
 # Agent-Bell
 
-Codex / Pi 的回合结束通知工具。每轮回复结束后，通过 [WxPusher](https://wxpusher.zjiecode.com/) 发送通知，可在 WxPusher 手机或桌面客户端接收。
-
-适合需要等 agent 处理较长任务，或同时在几台机器上运行 agent 的情况。
-
-[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+让 Codex 和 Pi 在一轮回复结束后给你发条通知。不用一直盯着终端，去做别的事，收到提醒再回来。
 
 ## 功能
 
-- 支持 Codex 和 Pi，可单独安装，也可同时使用。
-- 通知包含机器名、agent 名称、回复摘要和时间。
-- 有可用的摘要模型时生成简短摘要；否则使用最后回复的首行。
+- **回合结束提醒**：通过 [WxPusher](https://wxpusher.zjiecode.com/) 推送到手机或桌面客户端。
+- **多台机器分得清**：通知带上机器名、agent 名称和时间，知道该回哪个会话。
+- **先看一句摘要**：有可用的摘要模型时概括本轮内容，否则取最后回复的首行。
+- **按需安装**：支持 Codex、Pi，也可以两者一起用。
 
-## 通知示例
+一条通知大致是这样：
 
 ```text
 [laptop · Codex]
@@ -21,34 +18,12 @@ Codex / Pi 的回合结束通知工具。每轮回复结束后，通过 [WxPushe
 时间：2026-10-08 15:30:00
 ```
 
-“任务已完成”是通知中的固定文案，只表示本轮回复结束。实际执行结果需要查看原会话。
+其中“任务已完成”表示本轮回复结束，具体结果还是看原会话。
 
-## 使用
+## 开始使用
 
-先按 [WxPusher SPT 指南](https://wxpusher.zjiecode.com/docs/spt.html) 获取推送令牌，然后安装：
+准备好 WxPusher 推送令牌，按[安装指南](docs/guide.md)选择要接入的工具即可。机器名、摘要和代理设置见[配置说明](docs/configuration.md)。
 
-```sh
-git clone https://github.com/ch-z-hc/Agent-Bell.git
-cd Agent-Bell
-node install.mjs
-```
+通知会发送给 WxPusher；启用模型摘要时，相关对话文字也会发送给所选模型服务。
 
-需要 Node.js 18+。按提示选择 `codex`、`pi` 或 `both`，填写 SPT 和机器名。
-
-- Codex 需要支持 `Stop` hook，安装后在 `/hooks` 中审阅、信任并启用。
-- Pi 需要支持 `agent_settled`，安装后运行 `/reload` 或重开会话。
-
-安装时可以发送测试通知，在 WxPusher 客户端确认是否收到。
-
-## 文档
-
-- [安装、更新与常见问题](docs/guide.md)
-- [机器名、摘要、代理等配置](docs/configuration.md)
-
-## 数据说明
-
-通知正文会发送给 WxPusher。生成模型摘要时，本轮请求和最后回复还会发送给所选模型端点。请勿公开 SPT 或 API key。
-
-## 许可证
-
-[MIT](LICENSE)
+[MIT License](LICENSE)
